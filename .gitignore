@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+dist/
+build/
+.coverage
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+htmlcov/
+sandbox_samples/
+*.temp/
+*.tmp
+Thumbs.db
+.DS_Store
