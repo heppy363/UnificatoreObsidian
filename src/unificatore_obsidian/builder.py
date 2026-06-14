@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 
 
@@ -15,11 +16,15 @@ MARKDOWN_LINK_RE = re.compile(r"(?<!!)\[([^\]]+)\]\(([^)]+)\)")
 MARKDOWN_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".bmp"}
 DEFAULT_LATEX_LIST_DEPTH = 9
-PREFERRED_PDF_ENGINES = ("xelatex", "lualatex", "pdflatex")
+PREFERRED_PDF_ENGINES = ("tectonic", "xelatex", "lualatex", "pdflatex")
 DEFAULT_PAPER_SIZE = "a4"
 DEFAULT_FONT_SIZE = "10pt"
 DEFAULT_PAGE_MARGIN = "18mm"
 DEFAULT_LINE_STRETCH = "1.05"
+PORTABLE_TOOL_DIR_NAMES = ("external", "tools", ".portable-tools")
+PANDOC_ENV_VAR = "UNIFICATORE_OBSIDIAN_PANDOC"
+PDF_ENGINE_ENV_VAR = "UNIFICATORE_OBSIDIAN_PDF_ENGINE"
+TOOLS_DIR_ENV_VAR = "UNIFICATORE_OBSIDIAN_TOOLS_DIR"
 
 
 @dataclass(frozen=True)
@@ -42,6 +47,14 @@ class BuildProgress:
     current: int | None = None
     total: int | None = None
     path: Path | None = None
+
+
+@dataclass(frozen=True)
+class ToolingStatus:
+    pandoc_command: str | None
+    pdf_engine_command: str | None
+    requested_pdf_engine: str | None
+    search_roots: tuple[Path, ...]
 
 
 class BuildError(RuntimeError):
@@ -111,6 +124,8 @@ def build_pdf(
     output_pdf: Path | None = None,
     vault_root: Path | None = None,
     pdf_engine: str | None = None,
+    pandoc_path: Path | str | None = None,
+    pdf_engine_path: Path | str | None = None,
     keep_temp: bool = False,
     extra_pandoc_args: list[str] | None = None,
     progress_callback: Callable[[BuildProgress], None] | None = None,
@@ -121,12 +136,20 @@ def build_pdf(
     if index_file.suffix.lower() != ".md":
         raise BuildError("Il file indice deve essere un Markdown `.md`.")
 
-    if shutil.which("pandoc") is None:
+    tooling = inspect_tooling(
+        index_file=index_file,
+        pdf_engine=pdf_engine,
+        pandoc_path=pandoc_path,
+        pdf_engine_path=pdf_engine_path,
+    )
+    if tooling.pandoc_command is None:
         raise BuildError(
-            "Pandoc non e disponibile nel PATH. Installalo e riprova."
+            "Pandoc non e disponibile. Prova una di queste opzioni: "
+            f"impostare `{PANDOC_ENV_VAR}`, usare `--pandoc-path`, oppure "
+            "mettere il binario in `external/`, `tools/` o `.portable-tools/`."
         )
 
-    selected_pdf_engine = pdf_engine or detect_pdf_engine()
+    selected_pdf_engine = tooling.pdf_engine_command
     notify_progress(
         progress_callback,
         BuildProgress(
@@ -179,10 +202,11 @@ def build_pdf(
             ),
         )
         command = build_pandoc_command(
+            pandoc_command=tooling.pandoc_command,
             prepared_notes=prepared_notes,
             output_pdf=output_pdf,
             vault_root=vault_root,
-            pdf_engine=selected_pdf_engine,
+            pdf_engine_command=selected_pdf_engine,
             extra_pandoc_args=extra_pandoc_args,
             latex_header_path=latex_header_path,
         )
@@ -264,16 +288,17 @@ def prepare_note_copies(
 
 
 def build_pandoc_command(
+    pandoc_command: str,
     prepared_notes: list[Path],
     output_pdf: Path,
     vault_root: Path,
-    pdf_engine: str | None,
+    pdf_engine_command: str | None,
     extra_pandoc_args: list[str],
     latex_header_path: Path | None = None,
 ) -> list[str]:
     resource_parts = [str(vault_root)]
     command = [
-        "pandoc",
+        pandoc_command,
         "--standalone",
         "--from",
         "gfm+yaml_metadata_block+bracketed_spans",
@@ -290,8 +315,8 @@ def build_pandoc_command(
         "-o",
         str(output_pdf),
     ]
-    if pdf_engine:
-        command.extend(["--pdf-engine", pdf_engine])
+    if pdf_engine_command:
+        command.extend(["--pdf-engine", pdf_engine_command])
     if latex_header_path is not None:
         command.extend(["--include-in-header", str(latex_header_path)])
     command.extend(extra_pandoc_args)
@@ -299,11 +324,54 @@ def build_pandoc_command(
     return command
 
 
-def detect_pdf_engine() -> str | None:
+def detect_pdf_engine(search_roots: list[Path] | None = None) -> str | None:
     for engine in PREFERRED_PDF_ENGINES:
-        if shutil.which(engine):
-            return engine
+        resolved = resolve_command(
+            engine,
+            env_var=PDF_ENGINE_ENV_VAR,
+            search_roots=search_roots,
+        )
+        if resolved is not None:
+            return resolved
     return None
+
+
+def inspect_tooling(
+    index_file: Path | None = None,
+    pdf_engine: str | None = None,
+    pandoc_path: Path | str | None = None,
+    pdf_engine_path: Path | str | None = None,
+) -> ToolingStatus:
+    search_roots = tuple(build_tool_search_roots(index_file))
+    pandoc_command = resolve_command(
+        "pandoc",
+        env_var=PANDOC_ENV_VAR,
+        search_roots=list(search_roots),
+        explicit_path=pandoc_path,
+    )
+    if pdf_engine_path is not None:
+        pdf_engine_command = resolve_explicit_command(pdf_engine_path)
+    elif pdf_engine:
+        pdf_engine_command = resolve_command(
+            pdf_engine,
+            env_var=PDF_ENGINE_ENV_VAR,
+            search_roots=list(search_roots),
+        )
+        if pdf_engine_command is None:
+            raise BuildError(
+                f"Il motore PDF richiesto `{pdf_engine}` non e disponibile. "
+                f"Usa `--pdf-engine-path`, `{PDF_ENGINE_ENV_VAR}` oppure una cartella locale "
+                "`external/`, `tools/` o `.portable-tools/`."
+            )
+    else:
+        pdf_engine_command = detect_pdf_engine(list(search_roots))
+
+    return ToolingStatus(
+        pandoc_command=pandoc_command,
+        pdf_engine_command=pdf_engine_command,
+        requested_pdf_engine=pdf_engine,
+        search_roots=search_roots,
+    )
 
 
 def build_note_anchor_map(note_paths: list[Path], vault_root: Path) -> dict[Path, str]:
@@ -328,7 +396,7 @@ def build_note_anchor_map(note_paths: list[Path], vault_root: Path) -> dict[Path
 def is_latex_pdf_engine(pdf_engine: str | None) -> bool:
     if pdf_engine is None:
         return True
-    return pdf_engine.lower() in {"pdflatex", "xelatex", "lualatex", "latexmk", "tectonic"}
+    return tool_stem(pdf_engine) in {"pdflatex", "xelatex", "lualatex", "latexmk", "tectonic"}
 
 
 def write_latex_header(temp_dir: Path, list_depth: int = DEFAULT_LATEX_LIST_DEPTH) -> Path:
@@ -625,3 +693,104 @@ def notify_progress(
 ) -> None:
     if progress_callback is not None:
         progress_callback(event)
+
+
+def build_tool_search_roots(index_file: Path | None = None) -> list[Path]:
+    roots: list[Path] = []
+    configured_tools_dir = os.environ.get(TOOLS_DIR_ENV_VAR)
+    package_dir = Path(__file__).resolve().parent
+    package_root = package_dir.parents[1] if len(package_dir.parents) > 1 else package_dir
+    script_dir = Path(sys.argv[0]).resolve().parent if sys.argv and sys.argv[0] else Path.cwd()
+
+    for candidate in (
+        Path.cwd(),
+        script_dir,
+        package_root,
+        package_dir,
+        Path(configured_tools_dir) if configured_tools_dir else None,
+        index_file.resolve().parent if index_file is not None else None,
+    ):
+        if candidate is None:
+            continue
+        resolved = candidate.resolve()
+        if resolved not in roots:
+            roots.append(resolved)
+
+    return roots
+
+
+def resolve_command(
+    command_name: str,
+    env_var: str | None,
+    search_roots: list[Path] | None = None,
+    explicit_path: Path | str | None = None,
+) -> str | None:
+    if explicit_path is not None:
+        return resolve_explicit_command(explicit_path)
+
+    if env_var:
+        configured = os.environ.get(env_var)
+        if configured:
+            resolved = resolve_explicit_command(configured)
+            if resolved is not None:
+                return resolved
+
+    for root in search_roots or []:
+        for candidate in bundled_executable_candidates(root, command_name):
+            if candidate.is_file():
+                return str(candidate.resolve())
+
+    return shutil.which(command_name)
+
+
+def resolve_explicit_command(value: Path | str) -> str | None:
+    raw = str(value).strip()
+    if not raw:
+        return None
+
+    direct_candidate = Path(raw)
+    for candidate in (direct_candidate, *with_platform_suffix(direct_candidate)):
+        if candidate.is_file():
+            return str(candidate.resolve())
+
+    return shutil.which(raw)
+
+
+def bundled_executable_candidates(root: Path, command_name: str) -> list[Path]:
+    candidates: list[Path] = []
+    executable_names = executable_name_candidates(command_name)
+    relative_dirs = (
+        Path(),
+        Path("bin"),
+        Path(command_name),
+        Path(command_name) / "bin",
+    )
+    base_dirs = [Path()] + [Path(name) for name in PORTABLE_TOOL_DIR_NAMES]
+
+    for base_dir in base_dirs:
+        for relative_dir in relative_dirs:
+            for executable_name in executable_names:
+                candidate = root / base_dir / relative_dir / executable_name
+                if candidate not in candidates:
+                    candidates.append(candidate)
+
+    return candidates
+
+
+def executable_name_candidates(command_name: str) -> list[str]:
+    path = Path(command_name)
+    if path.suffix:
+        return [path.name]
+    if os.name == "nt":
+        return [f"{path.name}.exe", path.name]
+    return [path.name]
+
+
+def with_platform_suffix(path: Path) -> list[Path]:
+    if path.suffix or os.name != "nt":
+        return []
+    return [path.with_suffix(".exe")]
+
+
+def tool_stem(command: str) -> str:
+    return Path(command).stem.lower()

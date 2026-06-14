@@ -4,7 +4,7 @@ import argparse
 from pathlib import Path
 import sys
 
-from .builder import BuildError, BuildProgress, build_pdf
+from .builder import BuildError, build_pdf, inspect_tooling
 
 
 class ProgressReporter:
@@ -45,7 +45,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Genera un PDF unificato partendo da un indice Markdown di Obsidian."
     )
-    parser.add_argument("index_file", type=Path, help="Percorso del file indice `.md`.")
+    parser.add_argument("index_file", nargs="?", type=Path, help="Percorso del file indice `.md`.")
     parser.add_argument(
         "-o",
         "--output",
@@ -62,6 +62,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Motore PDF da passare a pandoc, ad esempio `xelatex`.",
     )
     parser.add_argument(
+        "--pandoc-path",
+        type=Path,
+        help="Percorso esplicito del binario pandoc, utile per setup portabili.",
+    )
+    parser.add_argument(
+        "--pdf-engine-path",
+        type=Path,
+        help="Percorso esplicito del binario del motore PDF, utile per setup portabili.",
+    )
+    parser.add_argument(
         "--keep-temp",
         action="store_true",
         help="Conserva i file temporanei accanto al PDF con estensione `.temp`.",
@@ -72,6 +82,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         help="Argomento extra da inoltrare a pandoc. Opzione ripetibile.",
     )
+    parser.add_argument(
+        "--diagnose",
+        action="store_true",
+        help="Mostra quali binari verrebbero usati per pandoc e il motore PDF.",
+    )
     return parser
 
 
@@ -80,12 +95,37 @@ def main() -> int:
     args = parser.parse_args()
     progress = ProgressReporter()
 
+    if args.diagnose:
+        try:
+            tooling = inspect_tooling(
+                index_file=args.index_file,
+                pdf_engine=args.pdf_engine,
+                pandoc_path=args.pandoc_path,
+                pdf_engine_path=args.pdf_engine_path,
+            )
+        except BuildError as exc:
+            print(f"Errore: {exc}", file=sys.stderr)
+            return 1
+
+        print(f"Pandoc: {tooling.pandoc_command or 'non trovato'}")
+        print(f"Motore PDF richiesto: {tooling.requested_pdf_engine or 'auto'}")
+        print(f"Motore PDF risolto: {tooling.pdf_engine_command or 'non trovato'}")
+        print("Cartelle controllate:")
+        for root in tooling.search_roots:
+            print(f"- {root}")
+        return 0
+
+    if args.index_file is None:
+        parser.error("il file indice e obbligatorio, a meno che non usi --diagnose")
+
     try:
         result = build_pdf(
             index_file=args.index_file,
             output_pdf=args.output,
             vault_root=args.vault_root,
             pdf_engine=args.pdf_engine,
+            pandoc_path=args.pandoc_path,
+            pdf_engine_path=args.pdf_engine_path,
             keep_temp=args.keep_temp,
             extra_pandoc_args=args.pandoc_arg,
             progress_callback=progress,

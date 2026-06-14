@@ -25,6 +25,11 @@ classifiers = [
 ]
 dependencies = []
 
+[project.optional-dependencies]
+portable = [
+  "pyinstaller>=6.11",
+]
+
 [project.scripts]
 unificatore-obsidian = "unificatore_obsidian.cli:main"
 

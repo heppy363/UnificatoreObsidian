@@ -4,19 +4,25 @@ import unittest
 
 from unificatore_obsidian.builder import (
     BuildProgress,
+    PANDOC_ENV_VAR,
+    PDF_ENGINE_ENV_VAR,
     build_note_anchor_map,
     build_pandoc_command,
+    build_tool_search_roots,
     collect_note_graph,
     decode_process_output,
     detect_vault_root,
     detect_pdf_engine,
     extract_obsidian_links,
+    inspect_tooling,
     insert_note_anchor,
     is_latex_pdf_engine,
     notify_progress,
+    resolve_command,
     rewrite_obsidian_syntax,
     write_latex_header,
 )
+from unittest.mock import patch
 
 
 class BuilderTests(unittest.TestCase):
@@ -145,10 +151,11 @@ class BuilderTests(unittest.TestCase):
 
     def test_build_pandoc_command_includes_header_when_present(self) -> None:
         command = build_pandoc_command(
+            pandoc_command="pandoc",
             prepared_notes=[Path("a.md"), Path("b.md")],
             output_pdf=Path("out.pdf"),
             vault_root=Path("vault"),
-            pdf_engine="xelatex",
+            pdf_engine_command="xelatex",
             extra_pandoc_args=[],
             latex_header_path=Path("header.tex"),
         )
@@ -165,11 +172,15 @@ class BuilderTests(unittest.TestCase):
 
     def test_detect_pdf_engine_returns_none_or_known_engine(self) -> None:
         engine = detect_pdf_engine()
-        self.assertIn(engine, {None, "xelatex", "lualatex", "pdflatex"})
+        self.assertIn(
+            Path(engine).stem if engine is not None else None,
+            {None, "tectonic", "xelatex", "lualatex", "pdflatex"},
+        )
 
     def test_is_latex_pdf_engine(self) -> None:
         self.assertTrue(is_latex_pdf_engine(None))
         self.assertTrue(is_latex_pdf_engine("xelatex"))
+        self.assertTrue(is_latex_pdf_engine(r"C:\tools\tectonic.exe"))
         self.assertFalse(is_latex_pdf_engine("wkhtmltopdf"))
 
     def test_notify_progress_invokes_callback(self) -> None:
@@ -183,6 +194,42 @@ class BuilderTests(unittest.TestCase):
     def test_decode_process_output_handles_non_utf8_bytes(self) -> None:
         self.assertEqual(decode_process_output(b"abc"), "abc")
         self.assertTrue(decode_process_output(b"\x8d").strip() != "")
+
+    def test_resolve_command_finds_portable_tool_in_external_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            portable = root / "external" / "pandoc" / "pandoc.exe"
+            portable.parent.mkdir(parents=True)
+            portable.write_bytes(b"")
+
+            resolved = resolve_command("pandoc", env_var=None, search_roots=[root])
+
+            self.assertEqual(Path(resolved), portable.resolve())
+
+    def test_inspect_tooling_prefers_explicit_and_environment_overrides(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pandoc = root / "pandoc.exe"
+            engine = root / "tectonic.exe"
+            pandoc.write_bytes(b"")
+            engine.write_bytes(b"")
+
+            with patch.dict("os.environ", {PANDOC_ENV_VAR: str(pandoc), PDF_ENGINE_ENV_VAR: str(engine)}):
+                tooling = inspect_tooling(index_file=root / "indice.md")
+
+            self.assertEqual(Path(tooling.pandoc_command), pandoc.resolve())
+            self.assertEqual(Path(tooling.pdf_engine_command), engine.resolve())
+
+    def test_build_tool_search_roots_includes_index_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            index = root / "vault" / "indice.md"
+            index.parent.mkdir(parents=True)
+            index.write_text("", encoding="utf-8")
+
+            roots = build_tool_search_roots(index)
+
+            self.assertIn(index.parent.resolve(), roots)
 
 
 if __name__ == "__main__":

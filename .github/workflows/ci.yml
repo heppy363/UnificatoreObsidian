@@ -36,3 +36,30 @@ jobs:
 
       - name: Build package
         run: uv build
+
+  portable-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          enable-cache: true
+
+      - name: Build portable CLI
+        shell: powershell
+        run: .\scripts\build-portable.ps1 -SkipZip
+
+      - name: Upload portable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: unificatore-obsidian-portable-cli
+          path: dist/portable-cli

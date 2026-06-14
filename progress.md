@@ -29,3 +29,8 @@ Creare una utility Python che prenda un `indice.md` dentro un vault Obsidian e g
 - I collegamenti tra note raccolte vengono convertiti in link interni nel PDF e l'esplorazione ricorsiva evita duplicati anche in presenza di riferimenti circolari.
 - Aggiunti file standard da repository pubblico: `LICENSE`, `.editorconfig`, `.gitattributes` e workflow CI GitHub Actions.
 - La generazione PDF reale non e stata rilanciata qui solo per una differenza di `PATH` nell'ambiente degli strumenti rispetto alla shell utente.
+- Aggiunta risoluzione portabile dei binari: la CLI ora cerca `pandoc` e il motore PDF anche in `external/`, `tools/` e `.portable-tools/`, oltre che tramite variabili ambiente e percorsi espliciti.
+- Aggiunta modalita `--diagnose` per verificare rapidamente cosa verra usato su altri computer.
+- `tectonic` e ora il primo motore PDF provato automaticamente, per favorire setup piu facili da spostare tra macchine.
+- Aggiunto entry point `python -m unificatore_obsidian` utile anche per la build standalone.
+- Aggiunto script `scripts/build-portable.ps1` per creare una distribuzione Windows CLI con `.exe` console, `README`, `LICENSE` e bundle opzionale della cartella `external/`.
