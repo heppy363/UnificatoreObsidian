@@ -2,9 +2,18 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import subprocess
 import sys
 
-from .builder import BuildError, build_pdf, inspect_tooling
+from .builder import (
+    BuildError,
+    InstallPlan,
+    ToolingStatus,
+    build_linux_install_plan,
+    build_pdf,
+    describe_missing_tools,
+    inspect_tooling,
+)
 
 
 class ProgressReporter:
@@ -39,6 +48,79 @@ class ProgressReporter:
         filled = int(self._bar_width * current / total)
         empty = self._bar_width - filled
         return f"[{'#' * filled}{'.' * empty}]"
+
+
+
+def offer_linux_install(tooling: ToolingStatus) -> bool:
+    plan = build_linux_install_plan(tooling)
+    if plan is None:
+        return False
+
+    print_install_plan(plan)
+    if not sys.stdin.isatty():
+        print(
+            "Ambiente non interattivo: installa i pacchetti indicati e rilancia lo stesso comando.",
+            file=sys.stderr,
+        )
+        return False
+
+    answer = input("Vuoi procedere con l'installazione? [s/N] ").strip().lower()
+    if answer not in {"s", "si", "y", "yes"}:
+        return False
+
+    for command in plan.commands:
+        print(f"Eseguo: {format_command(command)}", file=sys.stderr)
+        completed = subprocess.run(command, check=False)
+        if completed.returncode != 0:
+            print(
+                f"Installazione interrotta: il comando ha restituito codice {completed.returncode}.",
+                file=sys.stderr,
+            )
+            return False
+    return True
+
+
+def print_install_plan(plan: InstallPlan) -> None:
+    print("Strumenti mancanti:", file=sys.stderr)
+    for tool in plan.missing_tools:
+        print(f"- {tool}", file=sys.stderr)
+    print("", file=sys.stderr)
+    print(f"Gestore pacchetti rilevato: {plan.package_manager}", file=sys.stderr)
+    print("Pacchetti che verranno installati:", file=sys.stderr)
+    for package in plan.packages:
+        print(f"- {package}", file=sys.stderr)
+    print("", file=sys.stderr)
+    print("Comandi previsti:", file=sys.stderr)
+    for command in plan.commands:
+        print(f"- {format_command(command)}", file=sys.stderr)
+    if plan.notes:
+        print("", file=sys.stderr)
+        print("Riepilogo:", file=sys.stderr)
+        for note in plan.notes:
+            print(f"- {note}", file=sys.stderr)
+    print("", file=sys.stderr)
+
+
+def print_missing_tooling(tooling: ToolingStatus) -> None:
+    missing = describe_missing_tools(tooling)
+    print("Impossibile generare il PDF: mancano strumenti esterni.", file=sys.stderr)
+    for tool in missing:
+        print(f"- {tool}", file=sys.stderr)
+    print(
+        "Puoi installarli nel sistema, indicarli con --pandoc-path/--pdf-engine-path, "
+        "oppure metterli in external/, tools/ o .portable-tools/.",
+        file=sys.stderr,
+    )
+
+
+def format_command(command: tuple[str, ...]) -> str:
+    return " ".join(shell_quote(part) for part in command)
+
+
+def shell_quote(value: str) -> str:
+    if value and all(char.isalnum() or char in "@%_+=:,./-" for char in value):
+        return value
+    return "'" + value.replace("'", "'\\''") + "'"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -113,10 +195,44 @@ def main() -> int:
         print("Cartelle controllate:")
         for root in tooling.search_roots:
             print(f"- {root}")
+        if describe_missing_tools(tooling):
+            plan = build_linux_install_plan(tooling)
+            if plan is not None:
+                print("", file=sys.stderr)
+                print_install_plan(plan)
         return 0
 
     if args.index_file is None:
         parser.error("il file indice e obbligatorio, a meno che non usi --diagnose")
+
+    try:
+        tooling = inspect_tooling(
+            index_file=args.index_file,
+            pdf_engine=args.pdf_engine,
+            pandoc_path=args.pandoc_path,
+            pdf_engine_path=args.pdf_engine_path,
+        )
+    except BuildError as exc:
+        print(f"Errore: {exc}", file=sys.stderr)
+        return 1
+
+    if describe_missing_tools(tooling):
+        if not offer_linux_install(tooling):
+            print_missing_tooling(tooling)
+            return 1
+        try:
+            tooling = inspect_tooling(
+                index_file=args.index_file,
+                pdf_engine=args.pdf_engine,
+                pandoc_path=args.pandoc_path,
+                pdf_engine_path=args.pdf_engine_path,
+            )
+        except BuildError as exc:
+            print(f"Errore: {exc}", file=sys.stderr)
+            return 1
+        if describe_missing_tools(tooling):
+            print_missing_tooling(tooling)
+            return 1
 
     try:
         result = build_pdf(

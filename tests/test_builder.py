@@ -4,15 +4,18 @@ import unittest
 
 from unificatore_obsidian.builder import (
     BuildProgress,
+    ToolingStatus,
     PANDOC_ENV_VAR,
     PDF_ENGINE_ENV_VAR,
     build_note_anchor_map,
     build_pandoc_command,
     build_tool_search_roots,
+    build_linux_install_plan,
     collect_note_graph,
     decode_process_output,
     detect_vault_root,
     detect_pdf_engine,
+    describe_missing_tools,
     extract_obsidian_links,
     inspect_tooling,
     insert_note_anchor,
@@ -141,8 +144,12 @@ class BuilderTests(unittest.TestCase):
             header = write_latex_header(Path(tmp), list_depth=6)
             content = header.read_text(encoding="utf-8")
 
+            self.assertIn(r"\usepackage{fancyhdr}", content)
+            self.assertIn(r"\usepackage{lastpage}", content)
             self.assertIn(r"\usepackage{enumitem}", content)
             self.assertIn(r"\usepackage{longtable,booktabs,array,tabularx,ltablex,graphicx}", content)
+            self.assertIn(r"\fancyfoot[R]{\fontsize{8}{10}\selectfont Pagina \thepage\ di \pageref{LastPage}}", content)
+            self.assertIn("babel-header-logo.jpg", content)
             self.assertIn(r"\setlength{\LTleft}{0pt}", content)
             self.assertIn(r"\setkeys{Gin}{width=\maxwidth,height=\maxheight,keepaspectratio}", content)
             self.assertIn(r"\setlistdepth{6}", content)
@@ -163,9 +170,13 @@ class BuilderTests(unittest.TestCase):
         self.assertIn("--pdf-engine", command)
         self.assertIn("xelatex", command)
         self.assertIn("gfm+yaml_metadata_block+bracketed_spans", command)
+        self.assertIn("--toc", command)
+        self.assertIn("--toc-depth", command)
+        self.assertIn("toc-title=Sommario", command)
         self.assertIn("papersize:a4", command)
         self.assertIn("fontsize:10pt", command)
-        self.assertIn("geometry:margin=18mm", command)
+        self.assertIn("geometry:left=20mm", command)
+        self.assertIn("geometry:top=38mm", command)
         self.assertIn("linestretch:1.05", command)
         self.assertIn("--include-in-header", command)
         self.assertIn("header.tex", command)
@@ -219,6 +230,56 @@ class BuilderTests(unittest.TestCase):
 
             self.assertEqual(Path(tooling.pandoc_command), pandoc.resolve())
             self.assertEqual(Path(tooling.pdf_engine_command), engine.resolve())
+
+    def test_inspect_tooling_reports_missing_requested_engine(self) -> None:
+        with patch("unificatore_obsidian.builder.resolve_command", return_value=None):
+            tooling = inspect_tooling(pdf_engine="xelatex")
+
+        self.assertIsNone(tooling.pdf_engine_command)
+        self.assertEqual(tooling.requested_pdf_engine, "xelatex")
+        self.assertEqual(describe_missing_tools(tooling), ("pandoc", "xelatex"))
+
+    def test_build_linux_install_plan_for_apt_missing_all_tools(self) -> None:
+        tooling = ToolingStatus(
+            pandoc_command=None,
+            pdf_engine_command=None,
+            requested_pdf_engine=None,
+            search_roots=(),
+        )
+
+        with patch("sys.platform", "linux"), patch(
+            "unificatore_obsidian.builder.detect_linux_package_manager", return_value="apt-get"
+        ), patch("unificatore_obsidian.builder.is_running_as_root", return_value=True):
+            plan = build_linux_install_plan(tooling)
+
+        self.assertIsNotNone(plan)
+        assert plan is not None
+        self.assertEqual(plan.package_manager, "apt-get")
+        self.assertIn("pandoc", plan.packages)
+        self.assertIn("tectonic", plan.packages)
+        self.assertIn(("apt-get", "update"), plan.commands)
+        self.assertIn(("apt-get", "install", "-y", *plan.packages), plan.commands)
+
+
+    def test_build_linux_install_plan_for_dnf_uses_xelatex_packages(self) -> None:
+        tooling = ToolingStatus(
+            pandoc_command="/usr/bin/pandoc",
+            pdf_engine_command=None,
+            requested_pdf_engine=None,
+            search_roots=(),
+        )
+
+        with patch("sys.platform", "linux"), patch(
+            "unificatore_obsidian.builder.detect_linux_package_manager", return_value="dnf"
+        ), patch("unificatore_obsidian.builder.is_running_as_root", return_value=True):
+            plan = build_linux_install_plan(tooling)
+
+        self.assertIsNotNone(plan)
+        assert plan is not None
+        self.assertNotIn("tectonic", plan.packages)
+        self.assertIn("texlive-xetex", plan.packages)
+        self.assertIn("texlive-collection-latexextra", plan.packages)
+        self.assertIn(("dnf", "install", "-y", *plan.packages), plan.commands)
 
     def test_build_tool_search_roots_includes_index_directory(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

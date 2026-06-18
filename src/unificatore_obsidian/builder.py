@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -19,9 +20,26 @@ DEFAULT_LATEX_LIST_DEPTH = 9
 PREFERRED_PDF_ENGINES = ("tectonic", "xelatex", "lualatex", "pdflatex")
 DEFAULT_PAPER_SIZE = "a4"
 DEFAULT_FONT_SIZE = "10pt"
-DEFAULT_PAGE_MARGIN = "18mm"
 DEFAULT_LINE_STRETCH = "1.05"
+DEFAULT_GEOMETRY_OPTIONS = (
+    "left=20mm",
+    "right=20mm",
+    "top=38mm",
+    "bottom=22mm",
+    "headheight=46pt",
+    "headsep=17pt",
+    "footskip=18pt",
+)
+DEFAULT_TOC_DEPTH = "3"
+DEFAULT_TOC_TITLE = "Sommario"
 PORTABLE_TOOL_DIR_NAMES = ("external", "tools", ".portable-tools")
+BABEL_HEADER_TITLE = "Engineering Ingegneria Informatica S.p.A."
+BABEL_HEADER_SUBTITLE = "DC Sanita e Pubblica Amministrazione"
+BABEL_HEADER_NOTE = "Nota di lavoro"
+BABEL_LOGO_FILENAME = "babel-header-logo.jpg"
+BABEL_LOGO_BASE64 = (
+    "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"
+)
 PANDOC_ENV_VAR = "UNIFICATORE_OBSIDIAN_PANDOC"
 PDF_ENGINE_ENV_VAR = "UNIFICATORE_OBSIDIAN_PDF_ENGINE"
 TOOLS_DIR_ENV_VAR = "UNIFICATORE_OBSIDIAN_TOOLS_DIR"
@@ -55,6 +73,15 @@ class ToolingStatus:
     pdf_engine_command: str | None
     requested_pdf_engine: str | None
     search_roots: tuple[Path, ...]
+
+
+@dataclass(frozen=True)
+class InstallPlan:
+    package_manager: str
+    packages: tuple[str, ...]
+    commands: tuple[tuple[str, ...], ...]
+    missing_tools: tuple[str, ...]
+    notes: tuple[str, ...] = ()
 
 
 class BuildError(RuntimeError):
@@ -147,6 +174,16 @@ def build_pdf(
             "Pandoc non e disponibile. Prova una di queste opzioni: "
             f"impostare `{PANDOC_ENV_VAR}`, usare `--pandoc-path`, oppure "
             "mettere il binario in `external/`, `tools/` o `.portable-tools/`."
+        )
+
+    if tooling.pdf_engine_command is None:
+        missing = describe_missing_tools(tooling)
+        raise BuildError(
+            "Motore PDF non disponibile. "
+            f"Mancano: {', '.join(missing)}. "
+            "Installa un motore compatibile come `tectonic`, `xelatex`, `lualatex` o `pdflatex`, "
+            f"usa `--pdf-engine-path`, `{PDF_ENGINE_ENV_VAR}` oppure una cartella locale "
+            "`external/`, `tools/` o `.portable-tools/`"
         )
 
     selected_pdf_engine = tooling.pdf_engine_command
@@ -300,6 +337,11 @@ def build_pandoc_command(
     command = [
         pandoc_command,
         "--standalone",
+        "--toc",
+        "--toc-depth",
+        DEFAULT_TOC_DEPTH,
+        "--metadata",
+        f"toc-title={DEFAULT_TOC_TITLE}",
         "--from",
         "gfm+yaml_metadata_block+bracketed_spans",
         "--variable",
@@ -307,14 +349,14 @@ def build_pandoc_command(
         "--variable",
         f"fontsize:{DEFAULT_FONT_SIZE}",
         "--variable",
-        f"geometry:margin={DEFAULT_PAGE_MARGIN}",
-        "--variable",
         f"linestretch:{DEFAULT_LINE_STRETCH}",
         "--resource-path",
         os.pathsep.join(resource_parts),
         "-o",
         str(output_pdf),
     ]
+    for geometry_option in DEFAULT_GEOMETRY_OPTIONS:
+        command.extend(["--variable", f"geometry:{geometry_option}"])
     if pdf_engine_command:
         command.extend(["--pdf-engine", pdf_engine_command])
     if latex_header_path is not None:
@@ -357,12 +399,6 @@ def inspect_tooling(
             env_var=PDF_ENGINE_ENV_VAR,
             search_roots=list(search_roots),
         )
-        if pdf_engine_command is None:
-            raise BuildError(
-                f"Il motore PDF richiesto `{pdf_engine}` non e disponibile. "
-                f"Usa `--pdf-engine-path`, `{PDF_ENGINE_ENV_VAR}` oppure una cartella locale "
-                "`external/`, `tools/` o `.portable-tools/`."
-            )
     else:
         pdf_engine_command = detect_pdf_engine(list(search_roots))
 
@@ -372,6 +408,114 @@ def inspect_tooling(
         requested_pdf_engine=pdf_engine,
         search_roots=search_roots,
     )
+
+
+def describe_missing_tools(tooling: ToolingStatus) -> tuple[str, ...]:
+    missing: list[str] = []
+    if tooling.pandoc_command is None:
+        missing.append("pandoc")
+    if tooling.pdf_engine_command is None:
+        if tooling.requested_pdf_engine:
+            missing.append(tooling.requested_pdf_engine)
+        else:
+            missing.append("motore PDF LaTeX (tectonic/xelatex/lualatex/pdflatex)")
+    return tuple(missing)
+
+
+def build_linux_install_plan(tooling: ToolingStatus) -> InstallPlan | None:
+    if not sys.platform.startswith("linux"):
+        return None
+
+    missing_tools = describe_missing_tools(tooling)
+    if not missing_tools:
+        return None
+
+    package_manager = detect_linux_package_manager()
+    if package_manager is None:
+        return None
+
+    packages = linux_packages_for_missing_tools(package_manager, tooling)
+    if not packages:
+        return None
+
+    sudo = () if is_running_as_root() else ("sudo",)
+    if package_manager == "apt-get":
+        commands = (
+            (*sudo, "apt-get", "update"),
+            (*sudo, "apt-get", "install", "-y", *packages),
+        )
+    elif package_manager in {"dnf", "yum"}:
+        commands = ((*sudo, package_manager, "install", "-y", *packages),)
+    elif package_manager == "pacman":
+        commands = ((*sudo, "pacman", "-Sy", "--needed", *packages),)
+    elif package_manager == "zypper":
+        commands = ((*sudo, "zypper", "install", "-y", *packages),)
+    else:
+        return None
+
+    notes = (
+        "Pandoc converte Markdown in PDF.",
+        "Il motore LaTeX serve a renderizzare intestazione, footer, font, tabelle e immagini.",
+    )
+    return InstallPlan(
+        package_manager=package_manager,
+        packages=tuple(packages),
+        commands=commands,
+        missing_tools=missing_tools,
+        notes=notes,
+    )
+
+
+def detect_linux_package_manager() -> str | None:
+    for command in ("apt-get", "dnf", "yum", "pacman", "zypper"):
+        if shutil.which(command):
+            return command
+    return None
+
+
+def linux_packages_for_missing_tools(package_manager: str, tooling: ToolingStatus) -> tuple[str, ...]:
+    packages: list[str] = []
+    if tooling.pandoc_command is None:
+        packages.append("pandoc")
+
+    if tooling.pdf_engine_command is None:
+        engine_packages = linux_pdf_engine_packages(package_manager, tooling.requested_pdf_engine)
+        packages.extend(engine_packages)
+
+    return tuple(dict.fromkeys(packages))
+
+
+def linux_pdf_engine_packages(package_manager: str, requested_engine: str | None) -> tuple[str, ...]:
+    default_engine = "xelatex" if package_manager in {"dnf", "yum"} else "tectonic"
+    engine = tool_stem(requested_engine or default_engine)
+    if package_manager == "apt-get":
+        if engine == "tectonic":
+            return ("tectonic",)
+        if engine == "pdflatex":
+            return ("texlive-latex-base", "texlive-latex-extra", "texlive-fonts-recommended")
+        if engine == "lualatex":
+            return ("texlive-luatex", "texlive-latex-extra", "texlive-fonts-recommended")
+        return ("texlive-xetex", "texlive-latex-extra", "texlive-fonts-recommended")
+    if package_manager in {"dnf", "yum"}:
+        if engine == "pdflatex":
+            return ("texlive-scheme-basic", "texlive-collection-latexextra", "texlive-collection-fontsrecommended")
+        if engine == "lualatex":
+            return ("texlive-luatex", "texlive-collection-latexextra", "texlive-collection-fontsrecommended")
+        return ("texlive-xetex", "texlive-collection-latexextra", "texlive-collection-fontsrecommended")
+    if package_manager == "pacman":
+        if engine == "tectonic":
+            return ("tectonic",)
+        return ("texlive-bin", "texlive-latexextra", "texlive-fontsrecommended")
+    if package_manager == "zypper":
+        if engine == "tectonic":
+            return ("tectonic",)
+        return ("texlive-xetex", "texlive-latexextra", "texlive-fontsrecommended")
+    return ()
+
+
+def is_running_as_root() -> bool:
+    geteuid = getattr(os, "geteuid", None)
+    return bool(geteuid is not None and geteuid() == 0)
 
 
 def build_note_anchor_map(note_paths: list[Path], vault_root: Path) -> dict[Path, str]:
@@ -401,6 +545,8 @@ def is_latex_pdf_engine(pdf_engine: str | None) -> bool:
 
 def write_latex_header(temp_dir: Path, list_depth: int = DEFAULT_LATEX_LIST_DEPTH) -> Path:
     header_path = temp_dir / "pandoc-header.tex"
+    logo_path = temp_dir / BABEL_LOGO_FILENAME
+    logo_path.write_bytes(base64.b64decode(BABEL_LOGO_BASE64))
     enumerate_labels = [
         r"\arabic*.",
         r"\alph*.",
@@ -424,10 +570,26 @@ def write_latex_header(temp_dir: Path, list_depth: int = DEFAULT_LATEX_LIST_DEPT
         r"$\bullet$",
     ]
     lines = [
+        r"\usepackage{iftex}",
+        r"\ifPDFTeX",
+        r"  \usepackage[scaled=0.98]{helvet}",
+        r"  \renewcommand{\familydefault}{\sfdefault}",
+        r"\else",
+        r"  \usepackage{fontspec}",
+        r"  \IfFontExistsTF{Arial}{\setmainfont{Arial}\setsansfont{Arial}}{\setmainfont{TeX Gyre Heros}\setsansfont{TeX Gyre Heros}}",
+        r"\fi",
+        r"\usepackage{xcolor}",
+        r"\usepackage{fancyhdr}",
+        r"\usepackage{lastpage}",
+        r"\usepackage{titlesec}",
         r"\usepackage{enumitem}",
         r"\usepackage{etoolbox}",
         r"\usepackage{longtable,booktabs,array,tabularx,ltablex,graphicx}",
         r"\keepXColumns",
+        r"\definecolor{babelgray}{RGB}{128,128,128}",
+        r"\hypersetup{colorlinks=false,pdfborder={0 0 0},linkcolor=black,urlcolor=black,citecolor=black}",
+        r"\setlength{\parindent}{0pt}",
+        r"\setlength{\parskip}{4pt plus 1pt minus 1pt}",
         r"\setlength{\LTleft}{0pt}",
         r"\setlength{\LTright}{0pt}",
         r"\setlength{\tabcolsep}{4pt}",
@@ -446,6 +608,45 @@ def write_latex_header(temp_dir: Path, list_depth: int = DEFAULT_LATEX_LIST_DEPT
         r"\def\maxheight{\ifdim\Gin@nat@height>\textheight\textheight\else\Gin@nat@height\fi}",
         r"\makeatother",
         r"\setkeys{Gin}{width=\maxwidth,height=\maxheight,keepaspectratio}",
+        r"\pagestyle{fancy}",
+        r"\fancyhf{}",
+        rf"\fancyhead[L]{{\includegraphics[width=36.5mm]{{{latex_path(logo_path)}}}}}",
+        rf"\fancyhead[C]{{\begin{{minipage}}[b]{{66mm}}\centering\fontsize{{12}}{{13}}\selectfont\bfseries {latex_escape(BABEL_HEADER_TITLE)}\\[-1pt]{latex_escape(BABEL_HEADER_SUBTITLE)}\end{{minipage}}}}",
+        rf"\fancyhead[R]{{\begin{{minipage}}[b]{{25mm}}\raggedleft\fontsize{{10}}{{12}}\selectfont\itshape {latex_escape(BABEL_HEADER_NOTE)}\end{{minipage}}}}",
+        r"\fancyfoot[R]{\fontsize{8}{10}\selectfont Pagina \thepage\ di \pageref{LastPage}}",
+        r"\renewcommand{\headrulewidth}{0.5pt}",
+        r"\renewcommand{\footrulewidth}{0.5pt}",
+        r"\fancypagestyle{plain}{%",
+        r"  \fancyhf{}%",
+        rf"  \fancyhead[L]{{\includegraphics[width=36.5mm]{{{latex_path(logo_path)}}}}}%",
+        rf"  \fancyhead[C]{{\begin{{minipage}}[b]{{66mm}}\centering\fontsize{{12}}{{13}}\selectfont\bfseries {latex_escape(BABEL_HEADER_TITLE)}\\[-1pt]{latex_escape(BABEL_HEADER_SUBTITLE)}\end{{minipage}}}}%",
+        rf"  \fancyhead[R]{{\begin{{minipage}}[b]{{25mm}}\raggedleft\fontsize{{10}}{{12}}\selectfont\itshape {latex_escape(BABEL_HEADER_NOTE)}\end{{minipage}}}}%",
+        r"  \fancyfoot[R]{\fontsize{8}{10}\selectfont Pagina \thepage\ di \pageref{LastPage}}%",
+        r"  \renewcommand{\headrulewidth}{0.5pt}%",
+        r"  \renewcommand{\footrulewidth}{0.5pt}%",
+        r"}",
+        r"\AtBeginDocument{\pagestyle{fancy}\thispagestyle{fancy}}",
+        r"\titleformat{\section}{\centering\bfseries\fontsize{20}{24}\selectfont}{\thesection}{1em}{}",
+        r"\titleformat{\subsection}{\bfseries\fontsize{12}{14}\selectfont}{\thesubsection}{0.75em}{}",
+        r"\titleformat{\subsubsection}{\bfseries\fontsize{11}{13}\selectfont}{\thesubsubsection}{0.75em}{}",
+        r"\titlespacing*{\section}{0pt}{18pt}{12pt}",
+        r"\titlespacing*{\subsection}{0pt}{14pt}{6pt}",
+        r"\titlespacing*{\subsubsection}{0pt}{10pt}{4pt}",
+        r"\makeatletter",
+        r"\renewcommand{\maketitle}{%",
+        r"  \thispagestyle{fancy}%",
+        r"  \vspace*{118pt}%",
+        r"  \begin{center}%",
+        r"  \setlength{\fboxsep}{10pt}%",
+        r"  \colorbox{babelgray}{%",
+        r"    \begin{minipage}{\dimexpr\textwidth-20pt\relax}%",
+        r"    \centering\color{white}\bfseries\fontsize{18}{24}\selectfont\@title%",
+        r"    \end{minipage}%",
+        r"  }%",
+        r"  \end{center}%",
+        r"  \vspace{18pt}%",
+        r"}",
+        r"\makeatother",
         rf"\setlistdepth{{{list_depth}}}",
         rf"\renewlist{{itemize}}{{itemize}}{{{list_depth}}}",
         rf"\renewlist{{enumerate}}{{enumerate}}{{{list_depth}}}",
@@ -453,11 +654,30 @@ def write_latex_header(temp_dir: Path, list_depth: int = DEFAULT_LATEX_LIST_DEPT
     for index in range(1, list_depth + 1):
         item_label = itemize_labels[(index - 1) % len(itemize_labels)]
         enum_label = enumerate_labels[(index - 1) % len(enumerate_labels)]
-        lines.append(rf"\setlist[itemize,{index}]{{label={item_label}}}")
-        lines.append(rf"\setlist[enumerate,{index}]{{label={enum_label}}}")
+        lines.append(rf"\setlist[itemize,{index}]{{label={item_label},leftmargin=*}}")
+        lines.append(rf"\setlist[enumerate,{index}]{{label={enum_label},leftmargin=*}}")
     header_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return header_path
 
+
+def latex_escape(value: str) -> str:
+    replacements = {
+        "\\": r"\textbackslash{}",
+        "&": r"\&",
+        "%": r"\%",
+        "$": r"\$",
+        "#": r"\#",
+        "_": r"\_",
+        "{": r"\{",
+        "}": r"\}",
+        "~": r"\textasciitilde{}",
+        "^": r"\textasciicircum{}",
+    }
+    return "".join(replacements.get(char, char) for char in value)
+
+
+def latex_path(path: Path) -> str:
+    return path.as_posix().replace("\\", "/")
 
 def insert_note_anchor(text: str, anchor: str) -> str:
     anchor_markup = f"[]{{#{anchor}}}"
@@ -781,9 +1001,11 @@ def executable_name_candidates(command_name: str) -> list[str]:
     path = Path(command_name)
     if path.suffix:
         return [path.name]
-    if os.name == "nt":
-        return [f"{path.name}.exe", path.name]
-    return [path.name]
+    names = [path.name]
+    exe_name = f"{path.name}.exe"
+    if exe_name not in names:
+        names.append(exe_name)
+    return names
 
 
 def with_platform_suffix(path: Path) -> list[Path]:
@@ -793,4 +1015,5 @@ def with_platform_suffix(path: Path) -> list[Path]:
 
 
 def tool_stem(command: str) -> str:
-    return Path(command).stem.lower()
+    normalized = command.replace("\\", "/")
+    return Path(normalized).stem.lower()
