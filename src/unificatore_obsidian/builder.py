@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from datetime import date
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -20,6 +21,8 @@ DEFAULT_LATEX_LIST_DEPTH = 9
 PREFERRED_PDF_ENGINES = ("tectonic", "xelatex", "lualatex", "pdflatex")
 DEFAULT_PAPER_SIZE = "a4"
 DEFAULT_FONT_SIZE = "10pt"
+DEFAULT_MAIN_FONT = "Latin Modern Sans"
+DEFAULT_SANS_FONT = "Latin Modern Sans"
 DEFAULT_LINE_STRETCH = "1.05"
 DEFAULT_GEOMETRY_OPTIONS = (
     "left=20mm",
@@ -32,6 +35,9 @@ DEFAULT_GEOMETRY_OPTIONS = (
 )
 DEFAULT_TOC_DEPTH = "3"
 DEFAULT_TOC_TITLE = "Sommario"
+REVISION_TABLE_TITLE = "Tabella revisioni"
+REVISION_TABLE_AUTHOR = "Assistenza Tecnica"
+REVISION_TABLE_DESCRIPTION = "Prima emissione del manuale unificato"
 PORTABLE_TOOL_DIR_NAMES = ("external", "tools", ".portable-tools")
 BABEL_HEADER_TITLE = "Engineering Ingegneria Informatica S.p.A."
 BABEL_HEADER_SUBTITLE = "DC Sanita e Pubblica Amministrazione"
@@ -293,6 +299,10 @@ def prepare_note_copies(
     notes_root.mkdir(parents=True, exist_ok=True)
     total_notes = len(note_paths)
 
+    revision_path = notes_root / "00-tabella-revisioni.md"
+    revision_path.write_text(build_revision_table_markdown(note_paths[0]), encoding="utf-8")
+    prepared.append(revision_path)
+
     for index, note_path in enumerate(note_paths):
         relative = safe_relative(note_path, vault_root)
         target_path = notes_root / relative
@@ -301,6 +311,8 @@ def prepare_note_copies(
         text = note_path.read_text(encoding="utf-8")
         if index > 0:
             text = strip_yaml_frontmatter(text)
+        if index == 0:
+            text = normalize_markdown_lists(text)
         text = rewrite_obsidian_syntax(
             text,
             note_path.parent,
@@ -343,11 +355,15 @@ def build_pandoc_command(
         "--metadata",
         f"toc-title={DEFAULT_TOC_TITLE}",
         "--from",
-        "gfm+yaml_metadata_block+bracketed_spans",
+        "markdown+yaml_metadata_block+bracketed_spans+pipe_tables+raw_tex",
         "--variable",
         f"papersize:{DEFAULT_PAPER_SIZE}",
         "--variable",
         f"fontsize:{DEFAULT_FONT_SIZE}",
+        "--variable",
+        f"mainfont:{DEFAULT_MAIN_FONT}",
+        "--variable",
+        f"sansfont:{DEFAULT_SANS_FONT}",
         "--variable",
         f"linestretch:{DEFAULT_LINE_STRETCH}",
         "--resource-path",
@@ -576,7 +592,8 @@ def write_latex_header(temp_dir: Path, list_depth: int = DEFAULT_LATEX_LIST_DEPT
         r"  \renewcommand{\familydefault}{\sfdefault}",
         r"\else",
         r"  \usepackage{fontspec}",
-        r"  \IfFontExistsTF{Arial}{\setmainfont{Arial}\setsansfont{Arial}}{\setmainfont{TeX Gyre Heros}\setsansfont{TeX Gyre Heros}}",
+        r"  \setmainfont{Latin Modern Sans}",
+        r"  \setsansfont{Latin Modern Sans}",
         r"\fi",
         r"\usepackage{xcolor}",
         r"\usepackage{fancyhdr}",
@@ -587,7 +604,7 @@ def write_latex_header(temp_dir: Path, list_depth: int = DEFAULT_LATEX_LIST_DEPT
         r"\usepackage{longtable,booktabs,array,tabularx,ltablex,graphicx}",
         r"\keepXColumns",
         r"\definecolor{babelgray}{RGB}{128,128,128}",
-        r"\hypersetup{colorlinks=false,pdfborder={0 0 0},linkcolor=black,urlcolor=black,citecolor=black}",
+        r"\AtBeginDocument{\ifdefined\hypersetup\hypersetup{colorlinks=false,pdfborder={0 0 0},linkcolor=black,urlcolor=black,citecolor=black}\fi}",
         r"\setlength{\parindent}{0pt}",
         r"\setlength{\parskip}{4pt plus 1pt minus 1pt}",
         r"\setlength{\LTleft}{0pt}",
@@ -678,6 +695,64 @@ def latex_escape(value: str) -> str:
 
 def latex_path(path: Path) -> str:
     return path.as_posix().replace("\\", "/")
+
+
+def build_revision_table_markdown(index_file: Path, revision_date: date | None = None) -> str:
+    version = extract_document_version(index_file)
+    formatted_date = (revision_date or date.today()).strftime("%d/%m/%Y")
+    return (
+        f"# {REVISION_TABLE_TITLE}\n\n"
+        "| Versione | Data | Descrizione | Autore |\n"
+        "| --- | --- | --- | --- |\n"
+        f"| {version} | {formatted_date} | {REVISION_TABLE_DESCRIPTION} | {REVISION_TABLE_AUTHOR} |\n\n"
+        "\\newpage\n"
+    )
+
+
+def extract_document_version(index_file: Path) -> str:
+    match = re.search(r"(?:^|[.\s_-])v?(\d+(?:\.\d+)+)(?:$|[.\s_-])", index_file.stem, re.IGNORECASE)
+    if match is None:
+        return "1.0"
+    return match.group(1)
+
+
+def normalize_markdown_lists(text: str) -> str:
+    lines = text.splitlines(keepends=True)
+    normalized: list[str] = []
+    inside_fence = False
+
+    for line in lines:
+        stripped = line.lstrip()
+        if stripped.startswith(chr(96) * 3) or stripped.startswith("~~~"):
+            inside_fence = not inside_fence
+            normalized.append(line)
+            continue
+
+        if inside_fence:
+            normalized.append(line)
+            continue
+
+        normalized.append(normalize_ordered_list_marker(line))
+
+    return "".join(normalized)
+
+
+def normalize_ordered_list_marker(line: str) -> str:
+    line_ending = ""
+    body = line
+    if body.endswith("\r\n"):
+        body = body[:-2]
+        line_ending = "\r\n"
+    elif body.endswith("\n"):
+        body = body[:-1]
+        line_ending = "\n"
+
+    match = re.match(r"^([ \t]*)(\d+)\)(\s+)(.*)$", body)
+    if match is None:
+        return line
+    indent = match.group(1).replace("\t", "    ")
+    return f"{indent}{match.group(2)}. {match.group(4)}{line_ending}"
+
 
 def insert_note_anchor(text: str, anchor: str) -> str:
     anchor_markup = f"[]{{#{anchor}}}"

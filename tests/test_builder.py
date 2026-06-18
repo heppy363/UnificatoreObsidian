@@ -1,3 +1,4 @@
+from datetime import date
 from pathlib import Path
 import tempfile
 import unittest
@@ -8,6 +9,7 @@ from unificatore_obsidian.builder import (
     PANDOC_ENV_VAR,
     PDF_ENGINE_ENV_VAR,
     build_note_anchor_map,
+    build_revision_table_markdown,
     build_pandoc_command,
     build_tool_search_roots,
     build_linux_install_plan,
@@ -16,11 +18,14 @@ from unificatore_obsidian.builder import (
     detect_vault_root,
     detect_pdf_engine,
     describe_missing_tools,
+    extract_document_version,
     extract_obsidian_links,
     inspect_tooling,
     insert_note_anchor,
     is_latex_pdf_engine,
+    normalize_markdown_lists,
     notify_progress,
+    prepare_note_copies,
     resolve_command,
     rewrite_obsidian_syntax,
     write_latex_header,
@@ -118,6 +123,47 @@ class BuilderTests(unittest.TestCase):
 
             self.assertIn("[Vai al capitolo](#note-capitolo)", rewritten)
 
+    def test_build_revision_table_markdown_uses_index_version(self) -> None:
+        content = build_revision_table_markdown(
+            Path("Indice Documentale Babel v1.2.3.md"),
+            revision_date=date(2026, 6, 18),
+        )
+
+        self.assertIn("# Tabella revisioni", content)
+        self.assertIn("| Versione | Data | Descrizione | Autore |", content)
+        self.assertIn("| 1.2.3 | 18/06/2026 | Prima emissione del manuale unificato | Assistenza Tecnica |", content)
+        self.assertTrue(content.endswith("\\newpage\n"))
+
+    def test_extract_document_version_defaults_when_missing(self) -> None:
+        self.assertEqual(extract_document_version(Path("Indice.md")), "1.0")
+
+    def test_normalize_markdown_lists_converts_nested_parenthesis_markers(self) -> None:
+        text = "1) [[Accesso babel]]\n\t1) [[Requisiti Tecnici del Browser]]\n"
+
+        normalized = normalize_markdown_lists(text)
+
+        self.assertEqual(
+            normalized,
+            "1. [[Accesso babel]]\n    1. [[Requisiti Tecnici del Browser]]\n",
+        )
+
+    def test_prepare_note_copies_prepends_revision_table_and_normalizes_index(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            index = root / "Indice Documentale Babel v1.0.0.md"
+            note = root / "Capitolo.md"
+            index.write_text("1) [[Capitolo]]\n\t1) [[Capitolo]]\n", encoding="utf-8")
+            note.write_text("# Capitolo\n", encoding="utf-8")
+            note_anchor_map = build_note_anchor_map([index, note], root)
+
+            prepared = prepare_note_copies([index, note], root, root / "tmp", note_anchor_map)
+
+            self.assertEqual(prepared[0].name, "00-tabella-revisioni.md")
+            self.assertIn("| 1.0.0 |", prepared[0].read_text(encoding="utf-8"))
+            index_copy = prepared[1].read_text(encoding="utf-8")
+            self.assertIn("1. [Capitolo](#note-capitolo)", index_copy)
+            self.assertIn("    1. [Capitolo](#note-capitolo)", index_copy)
+
     def test_build_note_anchor_map_generates_unique_anchors(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -150,6 +196,9 @@ class BuilderTests(unittest.TestCase):
             self.assertIn(r"\usepackage{longtable,booktabs,array,tabularx,ltablex,graphicx}", content)
             self.assertIn(r"\fancyfoot[R]{\fontsize{8}{10}\selectfont Pagina \thepage\ di \pageref{LastPage}}", content)
             self.assertIn("babel-header-logo.jpg", content)
+            self.assertIn(r"\setmainfont{Latin Modern Sans}", content)
+            self.assertNotIn("Arial", content)
+            self.assertIn(r"\AtBeginDocument{\ifdefined\hypersetup", content)
             self.assertIn(r"\setlength{\LTleft}{0pt}", content)
             self.assertIn(r"\setkeys{Gin}{width=\maxwidth,height=\maxheight,keepaspectratio}", content)
             self.assertIn(r"\setlistdepth{6}", content)
@@ -169,12 +218,14 @@ class BuilderTests(unittest.TestCase):
 
         self.assertIn("--pdf-engine", command)
         self.assertIn("xelatex", command)
-        self.assertIn("gfm+yaml_metadata_block+bracketed_spans", command)
+        self.assertIn("markdown+yaml_metadata_block+bracketed_spans+pipe_tables+raw_tex", command)
         self.assertIn("--toc", command)
         self.assertIn("--toc-depth", command)
         self.assertIn("toc-title=Sommario", command)
         self.assertIn("papersize:a4", command)
         self.assertIn("fontsize:10pt", command)
+        self.assertIn("mainfont:Latin Modern Sans", command)
+        self.assertIn("sansfont:Latin Modern Sans", command)
         self.assertIn("geometry:left=20mm", command)
         self.assertIn("geometry:top=38mm", command)
         self.assertIn("linestretch:1.05", command)
