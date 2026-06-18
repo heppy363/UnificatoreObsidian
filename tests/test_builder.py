@@ -9,7 +9,7 @@ from unificatore_obsidian.builder import (
     PANDOC_ENV_VAR,
     PDF_ENGINE_ENV_VAR,
     build_note_anchor_map,
-    build_revision_table_markdown,
+    write_latex_revision_table,
     build_pandoc_command,
     build_tool_search_roots,
     build_linux_install_plan,
@@ -123,15 +123,18 @@ class BuilderTests(unittest.TestCase):
 
             self.assertIn("[Vai al capitolo](#note-capitolo)", rewritten)
 
-    def test_build_revision_table_markdown_uses_index_version(self) -> None:
-        content = build_revision_table_markdown(
-            Path("Indice Documentale Babel v1.2.3.md"),
-            revision_date=date(2026, 6, 18),
-        )
+    def test_write_latex_revision_table_uses_index_version(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            revision = write_latex_revision_table(
+                Path(tmp),
+                Path("Indice Documentale Babel v1.2.3.md"),
+                revision_date=date(2026, 6, 18),
+            )
+            content = revision.read_text(encoding="utf-8")
 
-        self.assertIn("# Tabella revisioni", content)
-        self.assertIn("| Versione | Data | Descrizione | Autore |", content)
-        self.assertIn("| 1.2.3 | 18/06/2026 | Prima emissione del manuale unificato | Assistenza Tecnica |", content)
+        self.assertIn(r"\section*{Tabella revisioni}", content)
+        self.assertIn(r"\textbf{Versione}", content)
+        self.assertIn(r"1.2.3 & 18/06/2026 & Prima emissione del manuale unificato & Assistenza Tecnica", content)
         self.assertTrue(content.endswith("\\newpage\n"))
 
     def test_extract_document_version_defaults_when_missing(self) -> None:
@@ -147,7 +150,7 @@ class BuilderTests(unittest.TestCase):
             "1. [[Accesso babel]]\n    1. [[Requisiti Tecnici del Browser]]\n",
         )
 
-    def test_prepare_note_copies_prepends_revision_table_and_normalizes_index(self) -> None:
+    def test_prepare_note_copies_normalizes_index(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             index = root / "Indice Documentale Babel v1.0.0.md"
@@ -158,9 +161,8 @@ class BuilderTests(unittest.TestCase):
 
             prepared = prepare_note_copies([index, note], root, root / "tmp", note_anchor_map)
 
-            self.assertEqual(prepared[0].name, "00-tabella-revisioni.md")
-            self.assertIn("| 1.0.0 |", prepared[0].read_text(encoding="utf-8"))
-            index_copy = prepared[1].read_text(encoding="utf-8")
+            self.assertEqual(prepared[0].name, "Indice Documentale Babel v1.0.0.md")
+            index_copy = prepared[0].read_text(encoding="utf-8")
             self.assertIn("1. [Capitolo](#note-capitolo)", index_copy)
             self.assertIn("    1. [Capitolo](#note-capitolo)", index_copy)
 
@@ -214,11 +216,12 @@ class BuilderTests(unittest.TestCase):
             pdf_engine_command="xelatex",
             extra_pandoc_args=[],
             latex_header_path=Path("header.tex"),
+            revision_table_path=Path("revision.tex"),
         )
 
         self.assertIn("--pdf-engine", command)
         self.assertIn("xelatex", command)
-        self.assertIn("markdown+yaml_metadata_block+bracketed_spans+pipe_tables+raw_tex", command)
+        self.assertIn("gfm+yaml_metadata_block+bracketed_spans", command)
         self.assertIn("--toc", command)
         self.assertIn("--toc-depth", command)
         self.assertIn("toc-title=Sommario", command)
@@ -231,6 +234,8 @@ class BuilderTests(unittest.TestCase):
         self.assertIn("linestretch:1.05", command)
         self.assertIn("--include-in-header", command)
         self.assertIn("header.tex", command)
+        self.assertIn("--include-before-body", command)
+        self.assertIn("revision.tex", command)
 
     def test_detect_pdf_engine_returns_none_or_known_engine(self) -> None:
         engine = detect_pdf_engine()

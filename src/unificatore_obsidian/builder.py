@@ -232,8 +232,10 @@ def build_pdf(
             progress_callback=progress_callback,
         )
         latex_header_path = None
+        revision_table_path = None
         if is_latex_pdf_engine(selected_pdf_engine):
             latex_header_path = write_latex_header(temp_dir)
+            revision_table_path = write_latex_revision_table(temp_dir, index_file)
         notify_progress(
             progress_callback,
             BuildProgress(
@@ -252,6 +254,7 @@ def build_pdf(
             pdf_engine_command=selected_pdf_engine,
             extra_pandoc_args=extra_pandoc_args,
             latex_header_path=latex_header_path,
+            revision_table_path=revision_table_path,
         )
 
         completed = subprocess.run(
@@ -299,10 +302,6 @@ def prepare_note_copies(
     notes_root.mkdir(parents=True, exist_ok=True)
     total_notes = len(note_paths)
 
-    revision_path = notes_root / "00-tabella-revisioni.md"
-    revision_path.write_text(build_revision_table_markdown(note_paths[0]), encoding="utf-8")
-    prepared.append(revision_path)
-
     for index, note_path in enumerate(note_paths):
         relative = safe_relative(note_path, vault_root)
         target_path = notes_root / relative
@@ -344,6 +343,7 @@ def build_pandoc_command(
     pdf_engine_command: str | None,
     extra_pandoc_args: list[str],
     latex_header_path: Path | None = None,
+    revision_table_path: Path | None = None,
 ) -> list[str]:
     resource_parts = [str(vault_root)]
     command = [
@@ -355,7 +355,7 @@ def build_pandoc_command(
         "--metadata",
         f"toc-title={DEFAULT_TOC_TITLE}",
         "--from",
-        "markdown+yaml_metadata_block+bracketed_spans+pipe_tables+raw_tex",
+        "gfm+yaml_metadata_block+bracketed_spans",
         "--variable",
         f"papersize:{DEFAULT_PAPER_SIZE}",
         "--variable",
@@ -377,6 +377,8 @@ def build_pandoc_command(
         command.extend(["--pdf-engine", pdf_engine_command])
     if latex_header_path is not None:
         command.extend(["--include-in-header", str(latex_header_path)])
+    if revision_table_path is not None:
+        command.extend(["--include-before-body", str(revision_table_path)])
     command.extend(extra_pandoc_args)
     command.extend(str(path) for path in prepared_notes)
     return command
@@ -697,16 +699,22 @@ def latex_path(path: Path) -> str:
     return path.as_posix().replace("\\", "/")
 
 
-def build_revision_table_markdown(index_file: Path, revision_date: date | None = None) -> str:
+def write_latex_revision_table(temp_dir: Path, index_file: Path, revision_date: date | None = None) -> Path:
+    revision_path = temp_dir / "pandoc-revision-table.tex"
     version = extract_document_version(index_file)
     formatted_date = (revision_date or date.today()).strftime("%d/%m/%Y")
-    return (
-        f"# {REVISION_TABLE_TITLE}\n\n"
-        "| Versione | Data | Descrizione | Autore |\n"
-        "| --- | --- | --- | --- |\n"
-        f"| {version} | {formatted_date} | {REVISION_TABLE_DESCRIPTION} | {REVISION_TABLE_AUTHOR} |\n\n"
-        "\\newpage\n"
-    )
+    lines = [
+        rf"\section*{{{latex_escape(REVISION_TABLE_TITLE)}}}",
+        rf"\addcontentsline{{toc}}{{section}}{{{latex_escape(REVISION_TABLE_TITLE)}}}",
+        r"\begin{longtable}{|p{24mm}|p{28mm}|p{78mm}|p{36mm}|}",
+        r"\hline",
+        r"\textbf{Versione} & \textbf{Data} & \textbf{Descrizione} & \textbf{Autore} \\ \hline",
+        rf"{latex_escape(version)} & {latex_escape(formatted_date)} & {latex_escape(REVISION_TABLE_DESCRIPTION)} & {latex_escape(REVISION_TABLE_AUTHOR)} \\ \hline",
+        r"\end{longtable}",
+        r"\newpage",
+    ]
+    revision_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return revision_path
 
 
 def extract_document_version(index_file: Path) -> str:
